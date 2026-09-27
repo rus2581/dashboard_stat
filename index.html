@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Trading Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f1117; color: #e1e4e8; padding: 24px; line-height: 1.6; }
+        .container { max-width: 1100px; margin: 0 auto; }
+        
+        /* Header */
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 16px; }
+        h1 { font-size: 26px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 10px; }
+        .badge-live { background: rgba(63,185,80,0.15); color: #3fb950; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; border: 1px solid rgba(63,185,80,0.3); }
+        .controls { display: flex; align-items: center; gap: 12px; }
+        .last-updated { font-size: 13px; color: #8b949e; }
+        .btn-refresh { background: #238636; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 600; cursor: pointer; transition: background 0.2s; display: flex; align-items: center; gap: 6px; }
+        .btn-refresh:hover { background: #2ea043; }
+        .btn-refresh:disabled { background: #21262d; color: #8b949e; cursor: not-allowed; }
+
+        /* Cards */
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 24px; margin-bottom: 20px; }
+        .card h2 { font-size: 18px; font-weight: 600; margin-bottom: 16px; color: #fff; display: flex; align-items: center; gap: 8px; }
+        
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+        .stat-box { background: #0d1117; border: 1px solid #30363d; border-radius: 10px; padding: 16px; }
+        .stat-label { font-size: 12px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+        .stat-value { font-size: 24px; font-weight: 700; margin-top: 4px; }
+        .stat-value.green { color: #3fb950; }
+        .stat-value.red { color: #f85149; }
+        .stat-value.blue { color: #58a6ff; }
+        .stat-value.yellow { color: #d29922; }
+        .stat-sub { font-size: 12px; color: #8b949e; margin-top: 4px; }
+
+        .chart-container { position: relative; height: 300px; margin-top: 16px; }
+        .chart-container-sm { position: relative; height: 250px; margin-top: 16px; }
+        .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        @media (max-width: 768px) { .two-col { grid-template-columns: 1fr; } .stats-grid { grid-template-columns: repeat(2, 1fr); } }
+
+        table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #21262d; font-size: 14px; }
+        th { color: #8b949e; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+        tr:hover { background: #1c2128; }
+        .positive { color: #3fb950; font-weight: 600; }
+        .negative { color: #f85149; font-weight: 600; }
+        .highlight { background: rgba(88,166,255,0.05); }
+
+        .insight { background: #0d1117; border-left: 3px solid #58a6ff; padding: 12px 16px; margin: 12px 0; border-radius: 0 8px 8px 0; font-size: 14px; }
+        .insight.warning { border-left-color: #d29922; }
+        .insight.danger { border-left-color: #f85149; }
+        .insight.success { border-left-color: #3fb950; }
+
+        .tag { font-size: 11px; padding: 2px 8px; border-radius: 4px; margin-right: 4px; font-weight: 600; }
+        .tag-hot { background: rgba(248,81,73,0.15); color: #f85149; }
+        .tag-warm { background: rgba(210,153,34,0.15); color: #d29922; }
+        .tag-cool { background: rgba(63,185,80,0.15); color: #3fb950; }
+
+        /* Loading Overlay */
+        #loading { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #0f1117; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 9999; transition: opacity 0.3s; }
+        .spinner { width: 40px; height: 40px; border: 4px solid #30363d; border-top: 4px solid #58a6ff; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .hidden { opacity: 0; pointer-events: none; }
+    </style>
+</head>
+<body>
+
+<div id="loading">
+    <div class="spinner"></div>
+    <p style="margin-top: 16px; color: #8b949e;">Загрузка данных из Google Sheets...</p>
+</div>
+
+<div class="container" id="dashboard" style="display: none;">
+    <div class="header">
+        <h1>📊 Trading Dashboard <span class="badge-live">LIVE DATA</span></h1>
+        <div class="controls">
+            <span class="last-updated" id="lastUpdated">Не обновлено</span>
+            <button class="btn-refresh" id="refreshBtn" onclick="loadData()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/></svg>
+                Обновить
+            </button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>📈 Общая статистика</h2>
+        <div class="stats-grid" id="statsGrid">
+            <!-- Заполняется JS -->
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>📉 Кумулятивный PnL</h2>
+        <div class="chart-container"><canvas id="cumulativeChart"></canvas></div>
+    </div>
+
+    <div class="card">
+        <h2>🪙 Результаты по монетам</h2>
+        <div class="two-col">
+            <div style="overflow-x: auto;">
+                <table id="coinTable">
+                    <thead>
+                        <tr><th>Монета</th><th>Сделок</th><th>Winrate</th><th>Net PnL $</th><th>Средняя $</th><th>Оценка</th></tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div class="chart-container-sm"><canvas id="coinChart"></canvas></div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>⚖️ Лонги vs Шорты</h2>
+        <div class="two-col">
+            <table id="directionTable">
+                <thead><tr><th>Метрика</th><th>Лонги</th><th>Шорты</th></tr></thead>
+                <tbody></tbody>
+            </table>
+            <div class="chart-container-sm"><canvas id="longShortChart"></canvas></div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>📅 Дневной PnL</h2>
+        <div class="chart-container"><canvas id="dailyChart"></canvas></div>
+    </div>
+
+    <div class="card">
+        <h2>🧠 Автоматические выводы</h2>
+        <div id="insightsContainer"></div>
+    </div>
+</div>
+
+<script>
+const SHEET_ID = '1pS1Mx71tjvO__5HiQtF-MbudSyUG07LBOs_RkowDC9I';
+const SHEET_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv`;
+
+let charts = {};
+
+// Парсинг CSV с поддержкой кавычек и русских десятичных запятых
+function parseCSV(csvText) {
+    csvText = csvText.replace(/^\uFEFF/, ''); // Удаление BOM
+    const lines = csvText.split('\n').filter(line => line.trim() !== '');
+    if (lines.length < 2) return [];
+    
+    const parseLine = (line) => {
+        const result = [];
+        let current = '';
+        let inQuotes = false;
+        for (let i = 0; i < line.length; i++) {
+            const char = line[i];
+            if (char === '"') {
+                inQuotes = !inQuotes;
+            } else if (char === ',' && !inQuotes) {
+                result.push(current.trim());
+                current = '';
+            } else {
+                current += char;
+            }
+        }
+        result.push(current.trim());
+        return result;
+    };
+
+    const headers = parseLine(lines[0]);
+    const data = [];
+    
+    const pnlNetIdx = headers.findIndex(h => h.includes('PnL $') && h.includes('net'));
+    const flipIdx = headers.findIndex(h => h.includes('Флип'));
+    const coinIdx = headers.findIndex(h => h.includes('Монета'));
+    const dirIdx = headers.findIndex(h => h.includes('Направление'));
+    const dateIdx = headers.findIndex(h => h.includes('Дата'));
+
+    for (let i = 1; i < lines.length; i++) {
+        const cols = parseLine(lines[i]);
+        if (cols.length >= 5) {
+            let pnlNet = 0;
+            if (pnlNetIdx !== -1 && cols[pnlNetIdx]) {
+                const cleanStr = cols[pnlNetIdx].replace(',', '.').replace(/[^0-9.-]/g, '');
+                pnlNet = parseFloat(cleanStr) || 0;
+            }
+            
+            const isFlip = flipIdx !== -1 && cols[flipIdx] && cols[flipIdx].toLowerCase().includes('да');
+            const coin = coinIdx !== -1 ? cols[coinIdx].replace(/"/g, '') : 'Unknown';
+            const direction = dirIdx !== -1 ? cols[dirIdx].replace(/"/g, '') : 'Unknown';
+            const dateStr = dateIdx !== -1 ? cols[dateIdx].replace(/"/g, '') : '';
+            const date = dateStr.split(' ')[0]; 
+            
+            if (coin !== 'Unknown' && !isNaN(pnlNet)) {
+                data.push({ date, coin, direction, pnlNet, isFlip });
+            }
+        }
+    }
+    return data;
+}
+
+async function loadData() {
+    const btn = document.getElementById('refreshBtn');
+    btn.disabled = true;
+    btn.innerHTML = 'Загрузка...';
+    
+    try {
+        const response = await fetch(SHEET_URL);
+        if (!response.ok) throw new Error('Network response was not ok');
+        const csvText = await response.text();
+        const trades = parseCSV(csvText);
+        
+        if (trades.length === 0) throw new Error('Нет данных или неверный формат');
+        
+        updateDashboard(trades);
+        
+        const now = new Date();
+        document.getElementById('lastUpdated').textContent = `Обновлено: ${now.toLocaleTimeString('ru-RU')}`;
+    } catch (error) {
+        console.error(error);
+        document.getElementById('loading').innerHTML = `
+            <p style="color:#f85149; text-align:center; max-width: 400px;">
+                <strong>Ошибка загрузки данных.</strong><br><br>
+                Убедитесь, что в Google Таблице настроен доступ:<br>
+                <em>"Настройки доступа" → "Все, у кого есть ссылка" → "Читатель"</em>
+            </p>
+            <button onclick="location.reload()" style="margin-top:16px; padding:8px 16px; background:#21262d; color:#fff; border:1px solid #30363d; border-radius:6px; cursor:pointer;">Попробовать снова</button>
+        `;
+        return;
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/></svg> Обновить`;
+        document.getElementById('loading').classList.add('hidden');
+        document.getElementById('dashboard').style.display = 'block';
+    }
+}
+
+function analyzeData(trades) {
+    const totalTrades = trades.length;
+    const winningTrades = trades.filter(t => t.pnlNet > 0);
+    const losingTrades = trades.filter(t => t.pnlNet <= 0);
+    
+    const winrate = ((winningTrades.length / totalTrades) * 100).toFixed(1);
+    const totalPnl = trades.reduce((sum, t) => sum + t.pnlNet, 0);
+    
+    const grossProfit = winningTrades.reduce((sum, t) => sum + t.pnlNet, 0);
+    const grossLoss = Math.abs(losingTrades.reduce((sum, t) => sum + t.pnlNet, 0));
+    const profitFactor = grossLoss === 0 ? grossProfit.toFixed(2) : (grossProfit / grossLoss).toFixed(2);
+    
+    const avgWin = winningTrades.length > 0 ? (grossProfit / winningTrades.length).toFixed(2) : 0;
+    const avgLoss = losingTrades.length > 0 ? (grossLoss / losingTrades.length).toFixed(2) : 0;
+    
+    const coinStats = {};
+    trades.forEach(t => {
+        if (!coinStats[t.coin]) coinStats[t.coin] = { total: 0, wins: 0, pnl: 0, best: -Infinity, worst: Infinity };
+        coinStats[t.coin].total++;
+        coinStats[t.coin].pnl += t.pnlNet;
+        if (t.pnlNet > 0) coinStats[t.coin].wins++;
+        if (t.pnlNet > coinStats[t.coin].best) coinStats[t.coin].best = t.pnlNet;
+        if (t.pnlNet < coinStats[t.coin].worst) coinStats[t.coin].worst = t.pnlNet;
+    });
+    
+    const longTrades = trades.filter(t => t.direction.toUpperCase().includes('ЛОНГ') || t.direction.toUpperCase().includes('LONG'));
+    const shortTrades = trades.filter(t => t.direction.toUpperCase().includes('ШОРТ') || t.direction.toUpperCase().includes('SHORT'));
+    
+    const longPnl = longTrades.reduce((sum, t) => sum + t.pnlNet, 0);
+    const shortPnl = shortTrades.reduce((sum, t) => sum + t.pnlNet, 0);
+    const longWinrate = longTrades.length > 0 ? ((longTrades.filter(t => t.pnlNet > 0).length / longTrades.length) * 100).toFixed(1) : 0;
+    const shortWinrate = shortTrades.length > 0 ? ((shortTrades.filter(t => t.pnlNet > 0).length / shortTrades.length) * 100).toFixed(1) : 0;
+
+    const dailyPnl = {};
+    trades.forEach(t => {
+        if (!dailyPnl[t.date]) dailyPnl[t.date] = 0;
+        dailyPnl[t.date] += t.pnlNet;
+    });
+
+    let runningPnl = 0;
+    const cumulativePnl = trades.map(t => { runningPnl += t.pnlNet; return runningPnl; });
+
+    const flips = trades.filter(t => t.isFlip);
+    const flipPnl = flips.reduce((sum, t) => sum + t.pnlNet, 0);
+
+    return { totalTrades, winrate, totalPnl: totalPnl.toFixed(2), profitFactor, avgWin, avgLoss, coinStats, longStats: { count: longTrades.length, winrate: longWinrate, pnl: longPnl.toFixed(2) }, shortStats: { count: shortTrades.length, winrate: shortWinrate, pnl: shortPnl.toFixed(2) }, dailyPnl, cumulativePnl, flipsCount: flips.length, flipPnl: flipPnl.toFixed(2) };
+}
+
+function updateDashboard(trades) {
+    const analysis = analyzeData(trades);
+    
+    // 1. Stats Grid
+    document.getElementById('statsGrid').innerHTML = `
+        <div class="stat-box"><div class="stat-label">Всего сделок</div><div class="stat-value blue">${analysis.totalTrades}</div></div>
+        <div class="stat-box"><div class="stat-label">Winrate</div><div class="stat-value ${analysis.winrate >= 50 ? 'green' : 'red'}">${analysis.winrate}%</div></div>
+        <div class="stat-box"><div class="stat-label">Суммарный PnL</div><div class="stat-value ${analysis.totalPnl >= 0 ? 'green' : 'red'}">$${analysis.totalPnl}</div></div>
+        <div class="stat-box"><div class="stat-label">Profit Factor</div><div class="stat-value ${analysis.profitFactor >= 1.5 ? 'green' : 'yellow'}">${analysis.profitFactor}</div></div>
+        <div class="stat-box"><div class="stat-label">Средний выигрыш</div><div class="stat-value green">+$${analysis.avgWin}</div></div>
+        <div class="stat-box"><div class="stat-label">Средний проигрыш</div><div class="stat-value red">-$${analysis.avgLoss}</div></div>
+        <div class="stat-box"><div class="stat-label">Флипов</div><div class="stat-value yellow">${analysis.flipsCount} <span style="font-size:14px; font-weight:400">($${analysis.flipPnl})</span></div></div>
+    `;
+
+    // 2. Coin Table & Chart
+    const sortedCoins = Object.entries(analysis.coinStats).sort((a, b) => b[1].pnl - a[1].pnl);
+    let coinTableHtml = '';
+    sortedCoins.forEach(([coin, stats]) => {
+        const wr = ((stats.wins / stats.total) * 100).toFixed(1);
+        const avg = (stats.pnl / stats.total).toFixed(2);
+        let tag = stats.pnl > 20 ? '<span class="tag tag-hot">🔥 Лидер</span>' : (stats.pnl < 5 ? '<span class="tag tag-cool">❄️ Слабо</span>' : '<span class="tag tag-warm">⚡ Норм</span>');
+        coinTableHtml += `<tr class="${stats.pnl > 0 ? 'highlight' : ''}">
+            <td><strong>${coin}</strong></td>
+            <td>${stats.total}</td>
+            <td class="${wr >= 50 ? 'positive' : 'negative'}">${wr}%</td>
+            <td class="${stats.pnl >= 0 ? 'positive' : 'negative'}">$${stats.pnl.toFixed(2)}</td>
+            <td class="${avg >= 0 ? 'positive' : 'negative'}">$${avg}</td>
+            <td>${tag}</td>
+        </tr>`;
+    });
+    document.querySelector('#coinTable tbody').innerHTML = coinTableHtml;
+
+    if (charts.coin) charts.coin.destroy();
+    charts.coin = new Chart(document.getElementById('coinChart'), {
+        type: 'bar',
+        data: {
+            labels: sortedCoins.map(c => c[0]),
+            datasets: [{
+                label: 'Net PnL ($)',
+                data: sortedCoins.map(c => c[1].pnl),
+                backgroundColor: sortedCoins.map(c => c[1].pnl >= 0 ? 'rgba(63,185,80,0.7)' : 'rgba(248,81,73,0.7)'),
+                borderRadius: 6
+            }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } }, y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } } } }
+    });
+
+    // 3. Long vs Short
+    document.querySelector('#directionTable tbody').innerHTML = `
+        <tr><td>Сделок</td><td><strong>${analysis.longStats.count}</strong></td><td><strong>${analysis.shortStats.count}</strong></td></tr>
+        <tr><td>Winrate</td><td class="${analysis.longStats.winrate >= 50 ? 'positive' : 'negative'}">${analysis.longStats.winrate}%</td><td class="${analysis.shortStats.winrate >= 50 ? 'positive' : 'negative'}">${analysis.shortStats.winrate}%</td></tr>
+        <tr><td>Net PnL</td><td class="${analysis.longStats.pnl >= 0 ? 'positive' : 'negative'}">$${analysis.longStats.pnl}</td><td class="${analysis.shortStats.pnl >= 0 ? 'positive' : 'negative'}">$${analysis.shortStats.pnl}</td></tr>
+    `;
+    
+    if (charts.longShort) charts.longShort.destroy();
+    charts.longShort = new Chart(document.getElementById('longShortChart'), {
+        type: 'doughnut',
+        data: {
+            labels: ['Лонги PnL', 'Шорты PnL'],
+            datasets: [{ data: [Math.max(0, analysis.longStats.pnl), Math.max(0, analysis.shortStats.pnl)], backgroundColor: ['#3fb950','#f85149'], borderWidth: 0 }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#8b949e' } } } }
+    });
+
+    // 4. Cumulative Chart
+    if (charts.cumulative) charts.cumulative.destroy();
+    charts.cumulative = new Chart(document.getElementById('cumulativeChart'), {
+        type: 'line',
+        data: {
+            labels: trades.map((t, i) => i + 1),
+            datasets: [{
+                label: 'Кумулятивный PnL ($)',
+                data: analysis.cumulativePnl,
+                borderColor: '#58a6ff',
+                backgroundColor: 'rgba(88,166,255,0.1)',
+                fill: true, tension: 0.3, pointRadius: 2, borderWidth: 2
+            }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#8b949e' } } }, scales: { x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } }, y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } } } }
+    });
+
+    // 5. Daily Chart
+    const dailyLabels = Object.keys(analysis.dailyPnl);
+    const dailyValues = Object.values(analysis.dailyPnl);
+    if (charts.daily) charts.daily.destroy();
+    charts.daily = new Chart(document.getElementById('dailyChart'), {
+        type: 'bar',
+        data: {
+            labels: dailyLabels,
+            datasets: [{
+                label: 'Дневной PnL ($)',
+                data: dailyValues,
+                backgroundColor: dailyValues.map(v => v >= 0 ? 'rgba(63,185,80,0.7)' : 'rgba(248,81,73,0.7)'),
+                borderRadius: 6
+            }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } }, y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } } } }
+    });
+
+    // 6. Insights
+    const worstCoin = sortedCoins[sortedCoins.length - 1];
+    let insightsHtml = '';
+    
+    if (parseFloat(analysis.totalPnl) >= 0) {
+        insightsHtml += `<div class="insight success"><strong>✅ Стратегия работает:</strong> Winrate ${analysis.winrate}%, Profit Factor ${analysis.profitFactor}. За период получено <strong>$${analysis.totalPnl}</strong> чистыми.</div>`;
+    } else {
+        insightsHtml += `<div class="insight danger"><strong>⚠️ Текущий результат отрицательный:</strong> Общий PnL составляет <strong>$${analysis.totalPnl}</strong>. Рекомендуется пересмотреть риск-менеджмент.</div>`;
+    }
+
+    if (worstCoin && worstCoin[1].pnl < 10 && worstCoin[1].total > 3) {
+        const wr = ((worstCoin[1].wins / worstCoin[1].total) * 100).toFixed(1);
+        insightsHtml += `<div class="insight warning"><strong>⚠️ Внимание к ${worstCoin[0]}:</strong> Наименее эффективный актив. PnL: <strong>$${worstCoin[1].pnl.toFixed(2)}</strong>, Winrate: <strong>${wr}%</strong> (${worstCoin[1].total} сделок). Рассмотрите снижение объема или исключение из торговли.</div>`;
+    }
+
+    if (parseFloat(analysis.longStats.pnl) > parseFloat(analysis.shortStats.pnl) * 1.5 && analysis.shortStats.count > 2) {
+        insightsHtml += `<div class="insight"><strong>📌 Лонги преобладают:</strong> Лонги принесли <strong>$${analysis.longStats.pnl}</strong> (Winrate ${analysis.longStats.winrate}%), тогда как шорты только <strong>$${analysis.shortStats.pnl}</strong> (Winrate ${analysis.shortStats.winrate}%). В текущем рынке фокус на лонги оправдан.</div>`;
+    }
+
+    document.getElementById('insightsContainer').innerHTML = insightsHtml;
+}
+
+// Initial load
+loadData();
+
+// Auto-refresh every 5 minutes
+setInterval(loadData, 300000);
+</script>
+</body>
+</html>
